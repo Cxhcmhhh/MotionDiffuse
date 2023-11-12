@@ -426,7 +426,7 @@ class MotionTransformer(nn.Module):
         self.out = zero_module(nn.Linear(self.latent_dim, self.input_feats))
 
 
-    def subPoseRetrieval(SRLpre, Txt):
+    def subPoseRetrieval(self, SRLpre, Txt):
         subDict = SRLpre.predict(Txt)
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         num = 0
