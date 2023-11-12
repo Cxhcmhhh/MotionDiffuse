@@ -424,37 +424,8 @@ class MotionTransformer(nn.Module):
         
         # Output Module
         self.out = zero_module(nn.Linear(self.latent_dim, self.input_feats))
-        
-    def encode_text(self, text, device):
-        with torch.no_grad():
-            text = clip.tokenize(text, truncate=True).to(device)
-            x = self.clip.token_embedding(text).type(self.clip.dtype)  # [batch_size, n_ctx, d_model]
-
-            x = x + self.clip.positional_embedding.type(self.clip.dtype)
-            x = x.permute(1, 0, 2)  # NLD -> LND
-            x = self.clip.transformer(x)
-            x = self.clip.ln_final(x).type(self.clip.dtype)
-
-        
-        posevec = subPoseRetrieval(SRL_model, y['text'])
-        posevec = self.posefc(posevec)
-        pose_embed = self.pose_encoder(posevec)
-        pose_embed = self.posefc(pose_embed)
-        pose_emb = self.poseTransEncoder(pose_embed)[1:]
-        
-        
-        # T, B, D
-        x = self.text_pre_proj(x)
-        x += pose_emb
-        xf_out = self.textTransEncoder(x)
-        xf_out = self.text_ln(xf_out)
-        xf_proj = self.text_proj(xf_out[text.argmax(dim=-1), torch.arange(xf_out.shape[1])])
-        # B, T, D
-        xf_out = xf_out.permute(1, 0, 2)
-        return xf_proj, xf_out
 
 
-    
     def subPoseRetrieval(SRLpre, Txt):
         subDict = SRLpre.predict(Txt)
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -500,6 +471,35 @@ class MotionTransformer(nn.Module):
         return vec
 
 
+
+    
+    def encode_text(self, text, device):
+        with torch.no_grad():
+            text = clip.tokenize(text, truncate=True).to(device)
+            x = self.clip.token_embedding(text).type(self.clip.dtype)  # [batch_size, n_ctx, d_model]
+
+            x = x + self.clip.positional_embedding.type(self.clip.dtype)
+            x = x.permute(1, 0, 2)  # NLD -> LND
+            x = self.clip.transformer(x)
+            x = self.clip.ln_final(x).type(self.clip.dtype)
+
+        
+        posevec = subPoseRetrieval(SRL_model, y['text'])
+        posevec = self.posefc(posevec)
+        pose_embed = self.pose_encoder(posevec)
+        pose_embed = self.posefc(pose_embed)
+        pose_emb = self.poseTransEncoder(pose_embed)[1:]
+        
+        
+        # T, B, D
+        x = self.text_pre_proj(x)
+        x += pose_emb
+        xf_out = self.textTransEncoder(x)
+        xf_out = self.text_ln(xf_out)
+        xf_proj = self.text_proj(xf_out[text.argmax(dim=-1), torch.arange(xf_out.shape[1])])
+        # B, T, D
+        xf_out = xf_out.permute(1, 0, 2)
+        return xf_proj, xf_out
     
     def generate_src_mask(self, T, length):
         B = len(length)
