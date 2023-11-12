@@ -11,6 +11,7 @@ import clip
 
 import math
 
+from allennlp_models import pretrained as allenPre
 
 def timestep_embedding(timesteps, dim, max_period=10000):
     """
@@ -339,6 +340,35 @@ class MotionTransformer(nn.Module):
             nn.Linear(text_latent_dim, self.time_embed_dim)
         )
 
+
+        #positionalEncoding for pose transformer
+        self.pose_encoder = PositionalEncoding(self.latent_dim, self.dropout)
+
+
+        print('loading codebook')
+        self.textbook = np.load('codebook/textbook.npy')
+        self.posebook = np.load('codebook/posebook.npy')
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.textbookTensor = torch.as_tensor(self.textbook).to(device)
+        self.posebookTensor = torch.as_tensor(self.posebook).to(device)
+        #from pose feature(fetched from codebook) to condition
+        self.pose_dim = 72
+        print('POSE TRANS')
+        self.posefc = nn.Linear(self.pose_dim, self.latent_dim)
+        poseTransEncoderLayer = nn.TransformerEncoderLayer(d_model=self.latent_dim,
+                                                      nhead=self.text_num_heads,
+                                                      dim_feedforward=self.ff_size,
+                                                      dropout=self.dropout,
+                                                      activation=self.activation)
+
+        self.poseTransEncoder = nn.TransformerEncoder(seqTransEncoderLayer,
+                                                 num_layers=self.num_layers)
+        
+
+        print('Loading SRL-BERT')
+        self.SRL_model = allenPre.load_predictor('structured-prediction-srl-bert')
+
+                     
         # Input Embedding
         self.joint_embed = nn.Linear(self.input_feats, self.latent_dim)
 
@@ -387,8 +417,17 @@ class MotionTransformer(nn.Module):
             x = self.clip.transformer(x)
             x = self.clip.ln_final(x).type(self.clip.dtype)
 
+        
+        posevec = subPoseRetrieval(SRL_model, y['text'])
+        posevec = self.posefc(posevec)
+        pose_embed = self.pose_encoder(posevec)
+        pose_embed = self.posefc(pose_embed)
+        pose_emb = self.poseTransEncoder(pose_embed)[1:]
+        
+        
         # T, B, D
         x = self.text_pre_proj(x)
+        x += pose_emb
         xf_out = self.textTransEncoder(x)
         xf_out = self.text_ln(xf_out)
         xf_proj = self.text_proj(xf_out[text.argmax(dim=-1), torch.arange(xf_out.shape[1])])
@@ -396,6 +435,54 @@ class MotionTransformer(nn.Module):
         xf_out = xf_out.permute(1, 0, 2)
         return xf_proj, xf_out
 
+
+    
+    def subPoseRetrieval(SRLpre, Txt):
+        subDict = SRLpre.predict(Txt)
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        num = 0
+        vec = torch.zeros(4, 72).to(device)
+        for v in subDict['verbs']:
+            if num == 4:
+                break
+            sen = ""
+            if (v['tags'][0] == '0'):
+                continue
+            for i in range(len(v['tags'])):
+                if(v['tags'][i] != 'O'):
+                    sen += subDict['words'][i] + ' '
+            sen = sen[:-1]+'.'
+            if ' ' in sen:
+                enc_text = self.encode_text(sen)
+                d = torch.sum(enc_text ** 2, dim=1, keepdim=True) + \
+                torch.sum(self.textbookTensor**2, dim=1) - 2 * \
+                torch.matmul(enc_text, self.textbookTensor.t())
+
+                #from text index to pose index
+                min_encoding_indices = torch.argmin(d, dim=1).unsqueeze(1)
+                t_ran = torch.randint(0,12,min_encoding_indices.shape)
+                min_indices = (torch.div(min_encoding_indices, 4, rounding_mode='floor'))  * 12 + t_ran
+                min_encodings = torch.zeros(
+                    min_indices.shape[0], 72).to(device)#72 is pose dim
+                min_encodings.scatter_(1, min_indices, 1)
+        
+                # get quantized latent vectors
+                z_q = torch.matmul(min_encodings, self.posebookTensor).view(1, 72)
+                vec[num].add_(vec[num], z_q)
+                num += 1
+        if num == 1:
+            vec[1].add_(vec[0])
+            vec[2].add_(vec[0])
+            vec[3].add_(vec[0])
+        if num == 2:
+            vec[2].add_(vec[1])
+            vec[3].add_(vec[1])
+        if num == 3:
+            vec[3].add_(vec[2])
+        return vec
+
+
+    
     def generate_src_mask(self, T, length):
         B = len(length)
         src_mask = torch.ones(B, T)
