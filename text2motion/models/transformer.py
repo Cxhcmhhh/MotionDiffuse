@@ -374,7 +374,7 @@ class MotionTransformer(nn.Module):
         print('POSE TRANS')
         self.posefc = nn.Linear(self.pose_dim, self.latent_dim)
         poseTransEncoderLayer = nn.TransformerEncoderLayer(d_model=self.latent_dim,
-                                                      nhead=self.text_num_heads,
+                                                      nhead=text_num_heads,
                                                       dim_feedforward=self.ff_size,
                                                       dropout=self.dropout,
                                                       activation=self.activation)
