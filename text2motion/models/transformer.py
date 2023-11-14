@@ -439,12 +439,12 @@ class MotionTransformer(nn.Module):
         default_context_length = 77
         context_length = max_text_len + 2 # start_token + 20 + end_token
         assert context_length < default_context_length
-        texts = self.clip.tokenize(raw_text, context_length=context_length, truncate=True).to(device) # [bs, context_length] # if n_tokens > context_length -> will truncate
+        texts = clip.tokenize(raw_text, context_length=context_length, truncate=True).to(device) # [bs, context_length] # if n_tokens > context_length -> will truncate
         # print('texts', texts.shape)
         zero_pad = torch.zeros([texts.shape[0], default_context_length-context_length], dtype=texts.dtype, device=texts.device)
         texts = torch.cat([texts, zero_pad], dim=1)
         # print('texts after pad', texts.shape, texts)
-        return self.clip.encode_text(texts).float()
+        return clip.encode_text(texts).float()
 
     def subPoseRetrieval(self, SRLpre, Txt):
         subDict = SRLpre.predict(Txt)
