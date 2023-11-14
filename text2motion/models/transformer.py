@@ -432,9 +432,8 @@ class MotionTransformer(nn.Module):
         self.out = zero_module(nn.Linear(self.latent_dim, self.input_feats))
 
 
-    def sub_encode_text(self, raw_text):
+    def sub_encode_text(self, raw_text,device):
         # raw_text - list (batch_size length) of strings with input text prompts
-        device = next(self.parameters()).device
         max_text_len = 20
         default_context_length = 77
         context_length = max_text_len + 2 # start_token + 20 + end_token
@@ -446,9 +445,8 @@ class MotionTransformer(nn.Module):
         # print('texts after pad', texts.shape, texts)
         return self.clip.encode_text(texts).float()
 
-    def subPoseRetrieval(self, SRLpre, Txt):
+    def subPoseRetrieval(self, SRLpre, Txt,device):
         subDict = SRLpre.predict(Txt)
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         num = 0
         vec = torch.zeros(4, 72).to(device)
         for v in subDict['verbs']:
@@ -462,10 +460,10 @@ class MotionTransformer(nn.Module):
                     sen += subDict['words'][i] + ' '
             sen = sen[:-1]+'.'
             if ' ' in sen:
-                enc_text = self.sub_encode_text(sen)
+                enc_text = self.sub_encode_text(sen,device)
                 d = torch.sum(enc_text ** 2, dim=1, keepdim=True) + \
-                torch.sum(self.textbookTensor**2, dim=1) - 2 * \
-                torch.matmul(enc_text.float(), self.textbookTensor.float().t())
+                torch.sum(self.textbookTensor.to(device)**2, dim=1) - 2 * \
+                torch.matmul(enc_text.float(), self.textbookTensor.float().t().to(device))
 
                 #from text index to pose index
                 min_encoding_indices = torch.argmin(d, dim=1).unsqueeze(1).to(device)
@@ -476,8 +474,8 @@ class MotionTransformer(nn.Module):
                 min_encodings.scatter_(1, min_indices, 1)
         
                 # get quantized latent vectors
-                z_q = torch.matmul(min_encodings.float(), self.posebookTensor.float()).view(1, 72)
-                vec[num].add_(vec[num], z_q)
+                z_q = torch.matmul(min_encodings.float(), self.posebookTensor.float().to(device)).view(1, 72)
+                vec[num].add_(z_q.reshape(-1))
                 num += 1
         if num == 1:
             vec[1].add_(vec[0])
@@ -503,28 +501,32 @@ class MotionTransformer(nn.Module):
             x = x.permute(1, 0, 2)  # NLD -> LND
             x = self.clip.transformer(x)
             x = self.clip.ln_final(x).type(self.clip.dtype)
-        final_pose_emb = torch.zeros(len(oritext), self.latent_dim).to(device)
+        final_pose_emb = torch.zeros(len(oritext), 4, self.latent_dim).to(device)
         for numt in range(len(oritext)):
-            posevec = self.subPoseRetrieval(self.SRL_model, oritext[numt])
+            posevec = self.subPoseRetrieval(self.SRL_model, oritext[numt], device)
             posevec = self.posefc(posevec)
-            final_pose_emb[numt] += pose_emb
+            final_pose_emb[numt] += posevec
 
-        pose_embed = self.pose_encoder(final_pose_emb)
-        px = self.text_pre_proj(pose_embed)
-        pxf_out = self.poseTransEncoder(px)
-        pxf_out = self.pose_ln(pxf_out)
-        pxf_proj = self.pose_proj(pxf_out[text.argmax(dim=-1), torch.arange(pxf_out.shape[1])])
-        # B, T, D
-        pxf_out = pxf_out.permute(1, 0, 2)
-        
         # T, B, D
         x = self.text_pre_proj(x)
         xf_out = self.textTransEncoder(x)
         xf_out = self.text_ln(xf_out)
         xf_proj = self.text_proj(xf_out[text.argmax(dim=-1), torch.arange(xf_out.shape[1])])
+
+        pose_embed = self.pose_encoder(final_pose_emb)
+        pose_embed = pose_embed.permute(1, 0, 2)  # NLD -> LND
+        px = self.text_pre_proj(pose_embed)
+        px = torch.repeat_interleave(px, 20, 0)[:-3]
+        pxf_out = self.poseTransEncoder(px)
+        pxf_out = self.pose_ln(pxf_out)
+
+        pxf_proj = self.pose_proj(pxf_out[text.argmax(dim=-1), torch.arange(xf_out.shape[1])])
+        # B, T, D
+        pxf_out = pxf_out.permute(1, 0, 2)
+
         # B, T, D
         xf_out = xf_out.permute(1, 0, 2)
-        return xf_proj, xf_out
+        return xf_proj, xf_out, pxf_proj, pxf_out
     
     def generate_src_mask(self, T, length):
         B = len(length)
@@ -542,10 +544,10 @@ class MotionTransformer(nn.Module):
         if text is not None and len(text) != B:
             index = x.device.index
             text = text[index * B: index * B + B]
-        if xf_proj is None or xf_out is None:
-            xf_proj, xf_out, pemb = self.encode_text(text, x.device)
+        if xf_proj is None or xf_out is None or True:
+            xf_proj, xf_out, pxf_proj, pxf_out = self.encode_text(text, x.device)
 
-        emb = self.time_embed(timestep_embedding(timesteps, self.latent_dim)) + xf_proj + pemb
+        emb = self.time_embed(timestep_embedding(timesteps, self.latent_dim)) + xf_proj + pxf_proj
 
         # B, T, latent_dim
         h = self.joint_embed(x)
@@ -553,7 +555,7 @@ class MotionTransformer(nn.Module):
 
         src_mask = self.generate_src_mask(T, length).to(x.device).unsqueeze(-1)
         for module in self.temporal_decoder_blocks:
-            h = module(h, xf_out, emb, src_mask)
+            h = module(h, xf_out + pxf_out, emb, src_mask)
 
         output = self.out(h).view(B, T, -1).contiguous()
         return output
