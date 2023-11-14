@@ -372,7 +372,7 @@ class MotionTransformer(nn.Module):
         #from pose feature(fetched from codebook) to condition
         self.pose_dim = 72
         print('POSE TRANS')
-        self.posefc = nn.Linear(self.pose_dim, self.latent_dim)
+        self.posefc = nn.Linear(self.pose_dim, 512)
         poseTransEncoderLayer = nn.TransformerEncoderLayer(
             d_model=text_latent_dim,
             nhead=text_num_heads,
@@ -507,11 +507,10 @@ class MotionTransformer(nn.Module):
         for numt in range(len(oritext)):
             posevec = self.subPoseRetrieval(self.SRL_model, oritext[numt])
             posevec = self.posefc(posevec)
-            pose_embed = self.pose_encoder(posevec)
-            pose_emb = self.poseTransEncoder(pose_embed)[1:]
             final_pose_emb[numt] += pose_emb
-            
-        px = self.text_pre_proj(px)
+
+        pose_embed = self.pose_encoder(final_pose_emb)
+        px = self.text_pre_proj(pose_embed)
         pxf_out = self.poseTransEncoder(px)
         pxf_out = self.pose_ln(pxf_out)
         pxf_proj = self.pose_proj(pxf_out[text.argmax(dim=-1), torch.arange(pxf_out.shape[1])])
