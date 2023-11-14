@@ -444,7 +444,7 @@ class MotionTransformer(nn.Module):
         zero_pad = torch.zeros([texts.shape[0], default_context_length-context_length], dtype=texts.dtype, device=texts.device)
         texts = torch.cat([texts, zero_pad], dim=1)
         # print('texts after pad', texts.shape, texts)
-        return clip.encode_text(texts).float()
+        return self.clip.encode_text(texts).float()
 
     def subPoseRetrieval(self, SRLpre, Txt):
         subDict = SRLpre.predict(Txt)
