@@ -373,14 +373,20 @@ class MotionTransformer(nn.Module):
         self.pose_dim = 72
         print('POSE TRANS')
         self.posefc = nn.Linear(self.pose_dim, self.latent_dim)
-        poseTransEncoderLayer = nn.TransformerEncoderLayer(d_model=self.latent_dim,
-                                                      nhead=text_num_heads,
-                                                      dim_feedforward=self.ff_size,
-                                                      dropout=self.dropout,
-                                                      activation=self.activation)
+        poseTransEncoderLayer = nn.TransformerEncoderLayer(
+            d_model=text_latent_dim,
+            nhead=text_num_heads,
+            dim_feedforward=text_ff_size,
+            dropout=dropout,
+            activation=activation)
 
-        self.poseTransEncoder = nn.TransformerEncoder(poseTransEncoderLayer,
-                                                 num_layers=self.num_layers)
+        self.poseTransEncoder = nn.TransformerEncoder(            
+            textTransEncoderLayer,
+            num_layers=num_text_layers)
+        self.pose_ln = nn.LayerNorm(text_latent_dim)
+        self.pose_proj = nn.Sequential(
+            nn.Linear(text_latent_dim, self.time_embed_dim)
+        )
         
 
         print('Loading SRL-BERT')
@@ -426,6 +432,20 @@ class MotionTransformer(nn.Module):
         self.out = zero_module(nn.Linear(self.latent_dim, self.input_feats))
 
 
+    def sub_encode_text(self, raw_text):
+        # raw_text - list (batch_size length) of strings with input text prompts
+        device = next(self.parameters()).device
+        max_text_len = 20
+        default_context_length = 77
+        context_length = max_text_len + 2 # start_token + 20 + end_token
+        assert context_length < default_context_length
+        texts = self.clip.tokenize(raw_text, context_length=context_length, truncate=True).to(device) # [bs, context_length] # if n_tokens > context_length -> will truncate
+        # print('texts', texts.shape)
+        zero_pad = torch.zeros([texts.shape[0], default_context_length-context_length], dtype=texts.dtype, device=texts.device)
+        texts = torch.cat([texts, zero_pad], dim=1)
+        # print('texts after pad', texts.shape, texts)
+        return self.clip.encode_text(texts).float()
+
     def subPoseRetrieval(self, SRLpre, Txt):
         subDict = SRLpre.predict(Txt)
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -442,7 +462,7 @@ class MotionTransformer(nn.Module):
                     sen += subDict['words'][i] + ' '
             sen = sen[:-1]+'.'
             if ' ' in sen:
-                enc_text = self.encode_text(sen)
+                enc_text = self.sub_encode_text(sen)
                 d = torch.sum(enc_text ** 2, dim=1, keepdim=True) + \
                 torch.sum(self.textbookTensor**2, dim=1) - 2 * \
                 torch.matmul(enc_text, self.textbookTensor.t())
@@ -483,18 +503,24 @@ class MotionTransformer(nn.Module):
             x = x.permute(1, 0, 2)  # NLD -> LND
             x = self.clip.transformer(x)
             x = self.clip.ln_final(x).type(self.clip.dtype)
-
-        
-        posevec = self.subPoseRetrieval(self.SRL_model, oritext)
-        posevec = self.posefc(posevec)
-        pose_embed = self.pose_encoder(posevec)
-        pose_embed = self.posefc(pose_embed)
-        pose_emb = self.poseTransEncoder(pose_embed)[1:]
-        
+        final_pose_emb = torch.zeros(len(oritext), self.latent_dim).to(device)
+        for numt in range len(oritext):
+            posevec = self.subPoseRetrieval(self.SRL_model, oritext[numt])
+            posevec = self.posefc(posevec)
+            pose_embed = self.pose_encoder(posevec)
+            pose_embed = self.posefc(pose_embed)
+            pose_emb = self.poseTransEncoder(pose_embed)[1:]
+            final_pose_emb[numt] += pose_emb
+            
+        px = self.text_pre_proj(px)
+        pxf_out = self.poseTransEncoder(px)
+        pxf_out = self.pose_ln(pxf_out)
+        pxf_proj = self.pose_proj(pxf_out[text.argmax(dim=-1), torch.arange(pxf_out.shape[1])])
+        # B, T, D
+        pxf_out = pxf_out.permute(1, 0, 2)
         
         # T, B, D
         x = self.text_pre_proj(x)
-        x += pose_emb
         xf_out = self.textTransEncoder(x)
         xf_out = self.text_ln(xf_out)
         xf_proj = self.text_proj(xf_out[text.argmax(dim=-1), torch.arange(xf_out.shape[1])])
@@ -519,9 +545,9 @@ class MotionTransformer(nn.Module):
             index = x.device.index
             text = text[index * B: index * B + B]
         if xf_proj is None or xf_out is None:
-            xf_proj, xf_out = self.encode_text(text, x.device)
+            xf_proj, xf_out, pemb = self.encode_text(text, x.device)
 
-        emb = self.time_embed(timestep_embedding(timesteps, self.latent_dim)) + xf_proj
+        emb = self.time_embed(timestep_embedding(timesteps, self.latent_dim)) + xf_proj + pemb
 
         # B, T, latent_dim
         h = self.joint_embed(x)
