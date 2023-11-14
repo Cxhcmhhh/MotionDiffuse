@@ -504,7 +504,7 @@ class MotionTransformer(nn.Module):
             x = self.clip.transformer(x)
             x = self.clip.ln_final(x).type(self.clip.dtype)
         final_pose_emb = torch.zeros(len(oritext), self.latent_dim).to(device)
-        for numt in range len(oritext):
+        for numt in range(len(oritext)):
             posevec = self.subPoseRetrieval(self.SRL_model, oritext[numt])
             posevec = self.posefc(posevec)
             pose_embed = self.pose_encoder(posevec)
