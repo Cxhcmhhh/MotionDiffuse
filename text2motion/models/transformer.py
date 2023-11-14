@@ -508,7 +508,6 @@ class MotionTransformer(nn.Module):
             posevec = self.subPoseRetrieval(self.SRL_model, oritext[numt])
             posevec = self.posefc(posevec)
             pose_embed = self.pose_encoder(posevec)
-            pose_embed = self.posefc(pose_embed)
             pose_emb = self.poseTransEncoder(pose_embed)[1:]
             final_pose_emb[numt] += pose_emb
             
