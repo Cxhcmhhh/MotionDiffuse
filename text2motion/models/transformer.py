@@ -472,7 +472,7 @@ class MotionTransformer(nn.Module):
                 t_ran = torch.randint(0,12,min_encoding_indices.shape).to(device)
                 min_indices = (torch.div(min_encoding_indices, 4, rounding_mode='floor'))  * 12 + t_ran
                 min_encodings = torch.zeros(
-                    min_indices.shape[0], 72).to(device)#72 is pose dim
+                    min_indices.shape[0], 11592).to(device)#72 is pose dim
                 min_encodings.scatter_(1, min_indices, 1)
         
                 # get quantized latent vectors
