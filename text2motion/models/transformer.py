@@ -474,6 +474,7 @@ class MotionTransformer(nn.Module):
 
     
     def encode_text(self, text, device):
+        oritext = text
         with torch.no_grad():
             text = clip.tokenize(text, truncate=True).to(device)
             x = self.clip.token_embedding(text).type(self.clip.dtype)  # [batch_size, n_ctx, d_model]
@@ -484,7 +485,7 @@ class MotionTransformer(nn.Module):
             x = self.clip.ln_final(x).type(self.clip.dtype)
 
         
-        posevec = self.subPoseRetrieval(self.SRL_model, text)
+        posevec = self.subPoseRetrieval(self.SRL_model, oritext)
         posevec = self.posefc(posevec)
         pose_embed = self.pose_encoder(posevec)
         pose_embed = self.posefc(pose_embed)
