@@ -484,7 +484,7 @@ class MotionTransformer(nn.Module):
             x = self.clip.ln_final(x).type(self.clip.dtype)
 
         
-        posevec = self.subPoseRetrieval(self.SRL_model, y['text'])
+        posevec = self.subPoseRetrieval(self.SRL_model, text)
         posevec = self.posefc(posevec)
         pose_embed = self.pose_encoder(posevec)
         pose_embed = self.posefc(pose_embed)
