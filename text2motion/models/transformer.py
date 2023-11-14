@@ -465,7 +465,7 @@ class MotionTransformer(nn.Module):
                 enc_text = self.sub_encode_text(sen)
                 d = torch.sum(enc_text ** 2, dim=1, keepdim=True) + \
                 torch.sum(self.textbookTensor**2, dim=1) - 2 * \
-                torch.matmul(enc_text, self.textbookTensor.t())
+                torch.matmul(enc_text.float(), self.textbookTensor.float().t())
 
                 #from text index to pose index
                 min_encoding_indices = torch.argmin(d, dim=1).unsqueeze(1)
