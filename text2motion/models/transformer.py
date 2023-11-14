@@ -476,7 +476,7 @@ class MotionTransformer(nn.Module):
                 min_encodings.scatter_(1, min_indices, 1)
         
                 # get quantized latent vectors
-                z_q = torch.matmul(min_encodings, self.posebookTensor).view(1, 72)
+                z_q = torch.matmul(min_encodings.float(), self.posebookTensor.float()).view(1, 72)
                 vec[num].add_(vec[num], z_q)
                 num += 1
         if num == 1:
