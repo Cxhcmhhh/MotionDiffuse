@@ -11,7 +11,7 @@ import clip
 
 import math
 
-from allennlp_models import pretrained as allenPre
+from allennlp.predictors.predictor import Predictor
 
 def timestep_embedding(timesteps, dim, max_period=10000):
     """
@@ -384,7 +384,7 @@ class MotionTransformer(nn.Module):
         
 
         print('Loading SRL-BERT')
-        self.SRL_model = allenPre.load_predictor('structured-prediction-srl-bert')
+        self.SRL_model = Predictor.from_path("./predata/srlbert")
 
                      
         # Input Embedding
